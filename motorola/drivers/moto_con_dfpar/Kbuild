@@ -1,5 +1,6 @@
 # add -Wall to try to catch everything we can.
 EXTRA_CFLAGS += -Wall
 
-obj-m += con_dfpar.o
+moto_con_dfpar-y += con_dfpar.o
+obj-m += moto_con_dfpar.o
 
