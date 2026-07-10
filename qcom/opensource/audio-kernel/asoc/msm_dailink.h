@@ -396,3 +396,93 @@ SND_SOC_DAILINK_DEFS(tavil_i2s_tx1,
 	DAILINK_COMP_ARRAY(COMP_CODEC("tavil_codec", "tavil_i2s_tx1")),
 	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
 
+SND_SOC_DAILINK_DEFS(pri_mi2s_rx_franklin,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+        DAILINK_COMP_ARRAY(COMP_CODEC("cirrus-spk-1", "cs35l45"),
+                           COMP_CODEC("cirrus-spk-2", "cs35l45"),
+                           COMP_CODEC("cirrus-spk-3", "cs35l45")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(pri_mi2s_tx_franklin,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+        DAILINK_COMP_ARRAY(COMP_CODEC("cirrus-spk-1", "cs35l45"),
+                           COMP_CODEC("cirrus-spk-2", "cs35l45"),
+                           COMP_CODEC("cirrus-spk-3", "cs35l45")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+
+SND_SOC_DAILINK_DEFS(pri_tdm_rx_franklin,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+        DAILINK_COMP_ARRAY(COMP_CODEC("cirrus-spk-1", "cs35l45"),
+                           COMP_CODEC("cirrus-spk-2", "cs35l45"),
+                           COMP_CODEC("cirrus-spk-3", "cs35l45")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(pri_tdm_tx_franklin,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+        DAILINK_COMP_ARRAY(COMP_CODEC("cirrus-spk-1", "cs35l45"),
+                           COMP_CODEC("cirrus-spk-2", "cs35l45"),
+                           COMP_CODEC("cirrus-spk-3", "cs35l45")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+// [START] felix
+SND_SOC_DAILINK_DEFS(pri_mi2s_rx_felix,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+        DAILINK_COMP_ARRAY(COMP_CODEC("cirrus-spk", "cs35l45")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(pri_mi2s_tx_felix,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+        DAILINK_COMP_ARRAY(COMP_CODEC("cirrus-spk", "cs35l45")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(pri_tdm_rx_felix,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+        DAILINK_COMP_ARRAY(COMP_CODEC("cirrus-spk", "cs35l45")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(pri_tdm_tx_felix,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+        DAILINK_COMP_ARRAY(COMP_CODEC("cirrus-spk", "cs35l45")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+// Awinic Earpiece
+SND_SOC_DAILINK_DEFS(tert_mi2s_rx_felix,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+	DAILINK_COMP_ARRAY(COMP_CODEC("aw882xx_smartpa.0-0034", "aw882xx-aif-1-34")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+// [END] felix
+
+SND_SOC_DAILINK_DEFS(tert_mi2s_rx_reed,
+	DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+	DAILINK_COMP_ARRAY(COMP_CODEC("msm-stub-codec.1", "msm-stub-rx")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(tert_mi2s_tx_reed,
+	DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+	DAILINK_COMP_ARRAY(COMP_CODEC("msm-stub-codec.1", "msm-stub-rx")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(quin_mi2s_rx_cusco_fs19xx,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+        DAILINK_COMP_ARRAY(COMP_CODEC("fs16xx_0", "fs16xx-aif")),
+        DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(quin_mi2s_tx_cusco_fs19xx,
+        DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+        DAILINK_COMP_ARRAY(COMP_CODEC("fs16xx_0", "fs16xx-aif")),
+        DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(quin_mi2s_rx_aw882xx,
+	DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+	DAILINK_COMP_ARRAY(COMP_CODEC("aw882xx_smartpa_0", "aw882xx-aif-0"),
+	                   COMP_CODEC("aw882xx_smartpa_1", "aw882xx-aif-1")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
+SND_SOC_DAILINK_DEFS(quin_mi2s_tx_aw882xx,
+	DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
+	DAILINK_COMP_ARRAY(COMP_CODEC("aw882xx_smartpa_0", "aw882xx-aif-0"),
+	                   COMP_CODEC("aw882xx_smartpa_1", "aw882xx-aif-1")),
+	DAILINK_COMP_ARRAY(COMP_PLATFORM("snd-soc-dummy")));
+
