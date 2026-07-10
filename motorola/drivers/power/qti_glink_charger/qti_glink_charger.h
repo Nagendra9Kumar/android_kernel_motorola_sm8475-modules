@@ -74,6 +74,13 @@ enum oem_property_type {
 	OEM_PROP_MASTER_SWITCHEDCAP_INFO,
 	OEM_PROP_SLAVE_SWITCHEDCAP_INFO,
 	OEM_PROP_MASTER_SWITCHEDCAP_RESET,
+	OEM_PROP_WLS_WEAK_CHARGE_CTRL,
+	OEM_PROP_THERM_PRIMARY_CHG_CONTROL,
+	OEM_PROP_THERM_SECONDARY_CHG_CONTROL,
+	OEM_PROP_FG_DUMP_INFO,
+	OEM_PROP_FG_OPERATION,
+	OEM_PROP_TYPEC_RESET,
+	OEM_PROP_CHG_PARTNER_SOC,
 	OEM_PROP_MAX,
 };
 
@@ -100,6 +107,7 @@ enum mmi_charger_sku_type
 struct switched_dev_info
 {
 	bool chg_en;
+	u8 chip_id;
 	u8 chg_role;
 	u8 work_mode;
 	u8 int_stat;
@@ -117,6 +125,17 @@ struct switched_dev_info
 struct qti_charger_notify_data {
 	u32 receiver;
 	u32 data[MAX_OEM_NOTIFY_DATA_LEN];
+};
+
+struct fg_dump {
+	u8 work_mode;
+	u16 soc;
+	u16 voltage_mv;
+	s16 current_ma;
+	s16 temperature;
+	u16 cycle_count;
+	u32 remaining_capacity;
+	u32 full_capacity;
 };
 
 extern int qti_charger_set_property(u32 property, const void *val, size_t val_len);

@@ -71,7 +71,9 @@ enum {
 	NOTIFY_EVENT_TYPE_LPD_PRESENT,
 	NOTIFY_EVENT_TYPE_VBUS_PRESENT,
 	NOTIFY_EVENT_TYPE_POWER_WATT,
+	NOTIFY_EVENT_TYPE_POWER_WATT_DESIGN,
 	NOTIFY_EVENT_TYPE_CHG_REAL_TYPE,
+	NOTIFY_EVENT_TYPE_BATTERY_SOH,
 };
 
 static char *charge_rate[] = {
@@ -225,6 +227,10 @@ struct mmi_charger_chip {
 	bool			lpd_present;
 	int			power_watt;
 
+	int			state_of_health;
+	int			manufacturing_date;
+	int			first_usage_date;
+
 	int			suspended;
 	int			demo_mode;
 	bool			factory_mode;
@@ -365,6 +371,8 @@ static ssize_t state_sync_store(struct device *dev,
 					NOTIFY_EVENT_TYPE_VBUS_PRESENT);
 		mmi_notify_charger_event(this_chip,
 					NOTIFY_EVENT_TYPE_POWER_WATT);
+		mmi_notify_charger_event(this_chip,
+					NOTIFY_EVENT_TYPE_POWER_WATT_DESIGN);
 		mmi_notify_charger_event(this_chip,
 					NOTIFY_EVENT_TYPE_CHG_REAL_TYPE);
 		mutex_unlock(&this_chip->charger_lock);
@@ -754,6 +762,94 @@ static ssize_t age_show(struct device *dev,
 }
 static DEVICE_ATTR(age, S_IRUGO, age_show, NULL);
 
+static ssize_t state_of_health_show(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	if (!this_chip) {
+		pr_err("mmi_charger: chip is invalid\n");
+		return -ENODEV;
+	}
+
+	return scnprintf(buf, CHG_SHOW_MAX_SIZE, "%d\n", this_chip->state_of_health);
+}
+
+static DEVICE_ATTR(state_of_health, S_IRUGO, state_of_health_show, NULL);
+
+static ssize_t first_usage_date_show(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	if (!this_chip) {
+		pr_err("mmi_charger: chip is invalid\n");
+		return -ENODEV;
+	}
+
+	return scnprintf(buf, CHG_SHOW_MAX_SIZE, "%d\n", this_chip->first_usage_date);
+}
+
+static ssize_t first_usage_date_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	unsigned long r;
+	unsigned long first_usage_date;
+
+	if (!this_chip) {
+		pr_err("mmi_charger: chip is invalid\n");
+		return -ENODEV;
+	}
+
+	r = kstrtoul(buf, 0, &first_usage_date);
+	if (r) {
+		mmi_err(this_chip, "Invalid first_usage_date value = %lu\n", first_usage_date);
+		return -EINVAL;
+	}
+
+	this_chip->first_usage_date = first_usage_date;
+
+	return r ? r : count;
+}
+
+static DEVICE_ATTR(first_usage_date, 0644, first_usage_date_show, first_usage_date_store);
+
+static ssize_t manufacturing_date_show(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	if (!this_chip) {
+		pr_err("mmi_charger: chip is invalid\n");
+		return -ENODEV;
+	}
+
+	return scnprintf(buf, CHG_SHOW_MAX_SIZE, "%d\n", this_chip->manufacturing_date);
+}
+
+static ssize_t manufacturing_date_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	unsigned long r;
+	unsigned long manufacturing_date;
+
+	if (!this_chip) {
+		pr_err("mmi_charger: chip is invalid\n");
+		return -ENODEV;
+	}
+
+	r = kstrtoul(buf, 0, &manufacturing_date);
+	if (r) {
+		mmi_err(this_chip, "Invalid manufacturing_date value = %lu\n", manufacturing_date);
+		return -EINVAL;
+	}
+
+	this_chip->manufacturing_date = manufacturing_date;
+
+	return r ? r : count;
+}
+
+static DEVICE_ATTR(manufacturing_date, 0644, manufacturing_date_show, manufacturing_date_store);
+
 static ssize_t force_charger_suspend_show(struct device *dev,
 			struct device_attribute *attr,
 			char *buf)
@@ -895,6 +991,9 @@ static DEVICE_ATTR(force_charging_disable, 0644,
 static struct attribute * mmi_g[] = {
 	&dev_attr_charge_rate.attr,
 	&dev_attr_age.attr,
+	&dev_attr_state_of_health.attr,
+	&dev_attr_manufacturing_date.attr,
+	&dev_attr_first_usage_date.attr,
 	NULL,
 };
 
@@ -1799,10 +1898,20 @@ static void mmi_notify_charger_event(struct mmi_charger_chip *chip, int type)
 				"POWER_SUPPLY_POWER_WATT=%d",
 				chip->power_watt / 1000);
 			break;
+		case NOTIFY_EVENT_TYPE_POWER_WATT_DESIGN:
+			scnprintf(event_string, CHG_SHOW_MAX_SIZE,
+				"POWER_SUPPLY_POWER_WATT_DESIGN=%d",
+				chip->pd_pmax / 1000);
+			break;
 		case NOTIFY_EVENT_TYPE_CHG_REAL_TYPE:
 			scnprintf(event_string, CHG_SHOW_MAX_SIZE,
 				"POWER_SUPPLY_CHARGE_REAL_TYPE=%d",
 				chip->real_charger_type);
+			break;
+		case NOTIFY_EVENT_TYPE_BATTERY_SOH:
+			scnprintf(event_string, CHG_SHOW_MAX_SIZE,
+				"POWER_SUPPLY_STATE_OF_HEALTH=%d",
+				chip->state_of_health);
 			break;
 		default:
 			mmi_err(chip, "Invalid notify event type %d\n", type);
@@ -2003,6 +2112,22 @@ static int mmi_combine_battery_voltage(struct mmi_charger_chip *chip)
 	return voltage_mv;
 }
 
+static int mmi_combine_battery_soh(struct mmi_charger_chip *chip)
+{
+	int state_of_health = 0;
+
+	struct mmi_battery_pack *battery = NULL;
+
+	list_for_each_entry(battery, &chip->battery_list, list) {
+		if (battery->info->batt_soh != 0) {
+			state_of_health = battery->info->batt_soh;
+			break;
+		}
+	}
+
+	return state_of_health;
+}
+
 static void mmi_update_battery_status(struct mmi_charger_chip *chip)
 {
 	int soc;
@@ -2012,6 +2137,7 @@ static void mmi_update_battery_status(struct mmi_charger_chip *chip)
 	int voltage_mv;
 	int current_ma;
 	int charge_counter;
+	int state_of_health;
 	bool mmi_changed = false;
 	int batt_temp;
 	int batt_health = POWER_SUPPLY_HEALTH_UNKNOWN;
@@ -2106,6 +2232,15 @@ static void mmi_update_battery_status(struct mmi_charger_chip *chip)
 	voltage_mv = mmi_combine_battery_voltage(chip);
 	current_ma = mmi_combine_battery_current(chip);
 	charge_counter = mmi_combine_charge_counter(chip);
+
+	state_of_health = mmi_combine_battery_soh(chip);
+	if (state_of_health > 0 && chip->state_of_health != state_of_health) {
+		chip->state_of_health = state_of_health;
+		mmi_notify_charger_event(chip, NOTIFY_EVENT_TYPE_BATTERY_SOH);
+		mmi_info(chip, "state_of_health is %d\n",
+			state_of_health);
+	}
+
 	if (soc >= 0 && chip->combo_soc != soc) {
 		mmi_changed = true;
 		chip->combo_soc = soc;
@@ -2158,6 +2293,7 @@ static void mmi_update_battery_status(struct mmi_charger_chip *chip)
 
 	if ((chip->power_watt / 1000) != (power_watt / 1000)) {
 		mmi_changed = true;
+		mmi_notify_charger_event(chip, NOTIFY_EVENT_TYPE_POWER_WATT_DESIGN);
 		chip->power_watt = power_watt;
 		mmi_notify_charger_event(chip, NOTIFY_EVENT_TYPE_POWER_WATT);
 		mmi_info(chip, "charger power is %d mW\n", power_watt);
@@ -2191,12 +2327,13 @@ static void mmi_update_battery_status(struct mmi_charger_chip *chip)
 	if (mmi_changed) {
 		power_supply_changed(chip->mmi_psy);
 		mmi_info(chip, "Combo status: soc:%d, status:%d, temp:%d,"
-			" health:%d, age:%d, cycles:%d, voltage:%d, current:%d,"
+			" health:%d, soh %d, age:%d, cycles:%d, voltage:%d, current:%d,"
 			" counter:%d, rate:%s, lpd:%d, vbus:%d\n",
 			chip->combo_soc,
 			chip->combo_status,
 			chip->combo_temp,
 			chip->combo_health,
+			chip->state_of_health,
 			chip->combo_age,
 			chip->combo_cycles,
 			chip->combo_voltage_mv,
@@ -2643,6 +2780,11 @@ static int mmi_psy_notifier_call(struct notifier_block *nb, unsigned long val,
 
 	if (val != PSY_EVENT_PROP_CHANGED)
 		return NOTIFY_OK;
+
+	if (psy && !chip->batt_psy &&
+	    (strcmp(psy->desc->name, "battery") == 0)) {
+		mmi_battery_supply_init(chip);
+	}
 
 	if (psy &&
 	    ((strcmp(psy->desc->name, "battery") == 0) ||

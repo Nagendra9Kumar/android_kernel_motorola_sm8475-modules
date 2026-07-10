@@ -313,6 +313,13 @@ static int sc760x_set_auto_bsm_dis(struct sc760x_chip *sc, bool en)
     return sc760x_field_write(sc, AUTO_BSM_DIS, !!en);
 }
 
+static int sc760x_get_auto_bsm_dis(struct sc760x_chip *sc, int *auto_bsm_dis)
+{
+    int ret = 0;
+    ret = sc760x_field_read(sc, AUTO_BSM_DIS, auto_bsm_dis);
+    return ret;
+}
+
 static int sc760x_set_ibat_limit(struct sc760x_chip *sc, int curr)
 {
     int user_val = INT_MAX;
@@ -446,7 +453,7 @@ static int sc760x_dump_reg(struct sc760x_chip *sc)
     if (!sc->sc760x_enable)
         return -1;
 
-    for (i = 0; i <= 0x15; i++) {
+    for (i = 0; i <= 0x20; i++) {
         ret = regmap_read(sc->regmap, i, &val);
         if (!ret) {
             desc +=
@@ -514,13 +521,13 @@ static ssize_t sc760x_enable_store(struct device *dev,
 		const char *buf, size_t count)
 {
 	unsigned long r;
-	unsigned long enable;
+	int enable;
 	struct sc760x_chip *sc = dev_get_drvdata(dev);
 
 
-	r = kstrtoul(buf, 0, &enable);
+	r = kstrtoint(buf, 0, &enable);
 	if (r) {
-		pr_err("Invalid tx_mode = %lu\n", enable);
+		pr_err("Invalid sc760x_enable = %u\n", enable);
 		return -EINVAL;
 	}
 
@@ -547,6 +554,56 @@ static ssize_t sc760x_enable_show(struct device *dev,
 }
 
 static DEVICE_ATTR(sc760x_enable, S_IRUGO|S_IWUSR, sc760x_enable_show, sc760x_enable_store);
+
+static ssize_t sc760x_extmos_en_store(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	unsigned long r;
+	int enable;
+	struct sc760x_chip *sc = dev_get_drvdata(dev);
+
+
+	r = kstrtoint(buf, 0, &enable);
+	if (r) {
+		pr_err("Invalid sc760x_extmos_en = %u\n", enable);
+		return -EINVAL;
+	}
+
+	if (enable < 0) {
+		sc->user_extmos_en = -EINVAL;
+		pr_info("Clear user user_extmos_en setting\n");
+	} else {
+		sc->user_extmos_en = !!enable;
+		pr_info("Set user_extmos_en: %d\n", sc->user_extmos_en);
+
+		if (gpio_is_valid(sc->sc760x_extmos_en_gpio)) {
+			gpio_set_value(sc->sc760x_extmos_en_gpio,
+					enable);
+		}
+
+		sc->sc760x_extmos_en = enable;
+	}
+
+	return r ? r : count;
+}
+
+static ssize_t sc760x_extmos_en_show(struct device *dev,
+		struct device_attribute *attr,
+		char *buf)
+{
+    struct sc760x_chip *sc = dev_get_drvdata(dev);
+
+    if (gpio_is_valid(sc->sc760x_extmos_en_gpio)) {
+        sc->sc760x_extmos_en = gpio_get_value(sc->sc760x_extmos_en_gpio);
+    } else {
+        sc->sc760x_extmos_en = false;
+    }
+
+    return sprintf(buf, "%d\n", sc->sc760x_extmos_en);
+}
+
+static DEVICE_ATTR(sc760x_extmos_en, S_IRUGO|S_IWUSR, sc760x_extmos_en_show, sc760x_extmos_en_store);
 
 static ssize_t charger_suspend_store(struct device *dev,
 				struct device_attribute *attr,
@@ -705,6 +762,7 @@ static void sc760x_create_device_node(struct device *dev)
     device_create_file(dev, &dev_attr_sc760x_enable);
     device_create_file(dev, &dev_attr_charger_suspend);
     device_create_file(dev, &dev_attr_chg_en);
+    device_create_file(dev, &dev_attr_sc760x_extmos_en);
 }
 
 static void sc760x_remove_device_node(struct device *dev)
@@ -713,6 +771,7 @@ static void sc760x_remove_device_node(struct device *dev)
     device_remove_file(dev, &dev_attr_sc760x_enable);
     device_remove_file(dev, &dev_attr_charger_suspend);
     device_remove_file(dev, &dev_attr_chg_en);
+    device_remove_file(dev, &dev_attr_sc760x_extmos_en);
 }
 
 static int sc760x_set_thermal_mitigation(struct sc760x_chip *sc, int val)
@@ -855,6 +914,7 @@ static int sc760x_charger_get_property(struct power_supply *psy,
 				union power_supply_propval *val)
 {
 	struct sc760x_chip *sc = power_supply_get_drvdata(psy);
+	struct sc760x_mmi_charger *chg = sc->mmi_charger;
 	struct sc760x_state state;
 	int chrg_status = 0;
 	int ret = 0;
@@ -958,6 +1018,9 @@ static int sc760x_charger_get_property(struct power_supply *psy,
 		if (ret < 0)
 			return ret;
 		ret = 0;
+		break;
+	case POWER_SUPPLY_PROP_CAPACITY:
+		val->intval = chg->batt_info.batt_soc;
 		break;
 	default:
 		return -EINVAL;
@@ -1089,6 +1152,19 @@ static int sc760x_parse_dt(struct sc760x_chip *sc, struct device *dev)
 				       &sc->init_data.ichg);
 	if (ret)
 		sc->init_data.ichg = SC760x_ICHRG_I_DEF_uA;
+
+
+	sc->sc760x_extmos_en_gpio = of_get_named_gpio(node,
+			"mmi,sc760x_extmos_en", 0);
+	if (!gpio_is_valid(sc->sc760x_extmos_en_gpio)) {
+		pr_err("sc760x_extmos_en_gpio is not valid!\n");
+	}
+
+	ret = device_property_read_u32(sc->dev,
+				       "dual-vbatt-diff-thre",
+				       &sc->init_data.dual_vbatt_diff_thre);
+	if (ret)
+		sc->init_data.dual_vbatt_diff_thre = SC760x_DUAL_VBATT_DIFF_THRE;
 
 	ret = of_property_count_elems_of_size(node, "mmi,thermal-mitigation",
 							sizeof(u32));
@@ -1553,7 +1629,7 @@ static int sc760x_charger_get_chg_info(void *data, struct mmi_charger_info *chg_
 
 static int sc760x_charger_config_charge(void *data, struct mmi_charger_cfg *config)
 {
-	int rc = 0, sc760x_ibat_limit_set = 0, ibat_limit_vote = 0;
+	int rc = 0, sc760x_ibat_limit_set = 0, ibat_limit_vote = 0, auto_bsm_dis = 0;
 	u32 value;
 	bool chg_en;
 	bool cfg_changed = false;
@@ -1713,19 +1789,40 @@ static int sc760x_charger_config_charge(void *data, struct mmi_charger_cfg *conf
 	    if (rc < 0) {
 	        pr_err("Failed to enable audo bsm(%d)\n", rc);
 	    }
+
+          if (chg->sc->user_extmos_en < 0 && gpio_is_valid(chg->sc->sc760x_extmos_en_gpio)) {
+              if (abs(chg->paired_batt_info.batt_mv - chg->batt_info.batt_mv) < chg->sc->init_data.dual_vbatt_diff_thre)
+                  gpio_set_value(chg->sc->sc760x_extmos_en_gpio, 1);
+              else
+                  gpio_set_value(chg->sc->sc760x_extmos_en_gpio, 0);
+          }
+
 	} else {
 
 	    rc = sc760x_set_auto_bsm_dis(chg->sc, true);
 	    if (rc < 0) {
 	        pr_err("Failed to disable audo bsm(%d)\n", rc);
 	    }
+	    if (chg->sc->user_extmos_en < 0 && gpio_is_valid(chg->sc->sc760x_extmos_en_gpio)) {
+	        gpio_set_value(chg->sc->sc760x_extmos_en_gpio, 0);
+	    }
 	}
 
-	pr_info("chg_en:%d, online %d, chg_st:%d\n",
-			chg_en, state.online, state.chrg_stat);
+
+      if (gpio_is_valid(chg->sc->sc760x_extmos_en_gpio)) {
+          chg->sc->sc760x_extmos_en = gpio_get_value(chg->sc->sc760x_extmos_en_gpio);
+      }
+
+      sc760x_get_auto_bsm_dis(chg->sc, &auto_bsm_dis);
+
+	pr_info("chg_en:%d, online %d, chg_st:%d, extmos_en %d, auto_bsm_dis %d\n",
+			chg_en, state.online, state.chrg_stat, chg->sc->sc760x_extmos_en, auto_bsm_dis);
 	sc760x_get_ibat_limit(chg->sc, &sc760x_ibat_limit_set);
 	pr_info("sc760x_ibat_limit_set %d, ibat_limit_vote %d, target_fcc %d, target_fv %d, thermal_fcc_ua %d\n",
 			sc760x_ibat_limit_set, ibat_limit_vote, chg->chg_cfg.target_fcc, chg->chg_cfg.target_fv, chg->sc->thermal_fcc_ua);
+	pr_info("paired_vbatt %d, vbatt %d, dual_vbatt_diff %d, diff_thre %d\n",
+			chg->paired_batt_info.batt_mv, chg->batt_info.batt_mv, abs(chg->paired_batt_info.batt_mv - chg->batt_info.batt_mv),
+			chg->sc->init_data.dual_vbatt_diff_thre);
 	return 0;
 }
 
@@ -1796,6 +1893,7 @@ static void sc760x_charger_set_constraint(void *data,
 }
 
 #define DUAL_VBATT_DELTA_MV 200
+#define DUAL_VBATT_DELTA_MAX_MV 500
 static void sc760x_paired_battery_notify(void *data,
 			struct mmi_battery_info *batt_info)
 {
@@ -1836,8 +1934,8 @@ static void sc760x_paired_battery_notify(void *data,
 	pr_info("sc760x checking, partner_fg_vbatt %d, fg_vbatt %d\n", partner_fg_vbatt, fg_vbatt);
 	if (!is_usb_online(chg->sc) &&
 		!is_wls_online(chg->sc) &&
-		(DUAL_VBATT_DELTA_MV < (partner_fg_vbatt - fg_vbatt))) {
-		pr_err("partner_fg_vbatt > fg_vbatt, and delta value > %d, Does not turn on sc760x\n", DUAL_VBATT_DELTA_MV);
+		(DUAL_VBATT_DELTA_MV < (partner_fg_vbatt - fg_vbatt) || (fg_vbatt - partner_fg_vbatt) > DUAL_VBATT_DELTA_MV)) {
+		pr_err("partner_fg_vbatt diff fg_vbatt, and delta value %d, max threshold %d, Does not turn on sc760x\n", DUAL_VBATT_DELTA_MV, DUAL_VBATT_DELTA_MV);
 		return;
 	} else {
 		if (chg->sc->user_gpio_en < 0)
@@ -1984,8 +2082,9 @@ static int sc760x_charger_probe(struct i2c_client *client,
     sc->user_chg_en = -EINVAL;
     sc->user_chg_susp = -EINVAL;
     sc->user_gpio_en = -EINVAL;
+    sc->user_extmos_en = -EINVAL;
     sc->sc760x_enable = 0;
-
+    sc->sc760x_extmos_en = 0;
 
     sc->regmap = devm_regmap_init_i2c(client,
                             &sc760x_regmap_config);
@@ -2060,6 +2159,24 @@ static int sc760x_charger_probe(struct i2c_client *client,
 
     schedule_delayed_work(&sc->charge_detect_delayed_work,
 						msecs_to_jiffies(0));
+    }
+
+    if (gpio_is_valid(sc->sc760x_extmos_en_gpio)) {
+    	ret = gpio_request(sc->sc760x_extmos_en_gpio,
+    				"sc760x_extmos_en");
+    	if (ret) {
+    		dev_err(sc->dev, "%s: %d gpio request failed\n",
+    				__func__, sc->sc760x_extmos_en_gpio);
+    		sc->sc760x_extmos_en_gpio = -EINVAL;
+    	} else {
+    		/* Disable batt high load switch by default */
+    		ret = gpio_direction_output(sc->sc760x_extmos_en_gpio, 0);
+	    	if (ret) {
+	    		dev_err(sc->dev, "%s: Unable to set DIR [%d]\n",
+	    				__func__, sc->sc760x_extmos_en_gpio);
+	    		sc->sc760x_extmos_en_gpio = -EINVAL;
+	    	}
+    	}
     }
 
     dev_err(sc->dev, "sc760x[%s] probe successfully!!!\n",
@@ -2165,6 +2282,11 @@ static void sc760x_charger_shutdown(struct i2c_client *client)
 	if (ret) {
 		pr_err("Failed to disable charger, ret = %d\n", ret);
 	}
+
+      if (gpio_is_valid(sc->sc760x_extmos_en_gpio)) {
+          gpio_set_value(sc->sc760x_extmos_en_gpio, 0);
+      }
+
 	pr_info("sc760x_charger_shutdown\n");
 }
 

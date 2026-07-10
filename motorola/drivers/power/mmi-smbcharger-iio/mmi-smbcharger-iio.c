@@ -526,6 +526,11 @@ struct smb_mmi_charger {
 	bool			enable_dcp_ffc;
 
 	bool			enable_fcc_large_qg_iterm;
+
+	/*Battery info*/
+	unsigned long		manufacturing_date;
+	unsigned long		first_usage_date;
+	bool			lotx_enabled;
 };
 
 #define CHGR_FAST_CHARGE_CURRENT_CFG_REG	(CHGR_BASE + 0x61)
@@ -1693,6 +1698,9 @@ enum {
 	MMI_FACTORY_BUILD,
 };
 
+#ifdef CONFIG_MMI_BOOTCONFIG_SUPPORT
+#define MMI_BOOTCONFIG_SIZE 1024
+#endif
 static bool mmi_factory_check(int type)
 {
 	struct device_node *np = of_find_node_by_path("/chosen");
@@ -1701,6 +1709,10 @@ static bool mmi_factory_check(int type)
 	char *bl_version = NULL;
 	char *end = NULL;
 
+#ifdef CONFIG_MMI_BOOTCONFIG_SUPPORT
+	const char *mmi_bootconfig = NULL;
+	bool mmi_bootconfig_support = false;
+#endif
 	if (!np)
 		return factory;
 
@@ -1715,12 +1727,31 @@ static bool mmi_factory_check(int type)
 			if (bl_version) {
 				end = strpbrk(bl_version, " ");
 				bl_version = strpbrk(bl_version, "=");
+#ifdef CONFIG_MMI_BOOTCONFIG_SUPPORT
+			} else {
+				mmi_bootconfig_support = true;
+#endif
 			}
+
 			if (bl_version && end > bl_version &&
 			    strnstr(bl_version, "factory", end - bl_version)) {
 				factory = true;
 			}
 		}
+#ifdef CONFIG_MMI_BOOTCONFIG_SUPPORT
+		if (mmi_bootconfig_support && (!of_property_read_string(np, "mmi,bootconfig", &mmi_bootconfig)) ) {
+			bl_version = strnstr(mmi_bootconfig, "androidboot.bootloader=", MMI_BOOTCONFIG_SIZE);
+			if (bl_version) {
+				end = strpbrk(bl_version, "\n");
+				bl_version = strpbrk(bl_version, "=");
+			}
+
+			if (bl_version && end > bl_version &&
+			    strnstr(bl_version, "factory", end - bl_version)) {
+				factory = true;
+			}
+		}
+#endif
 		break;
 	default:
 		factory = false;
@@ -3325,8 +3356,10 @@ static int mmi_set_qg_iterm(struct smb_mmi_charger *chip, int qg_iterm)
 	int fcc = 0;
 	union power_supply_propval val;
 
-	rc = power_supply_get_property(chip->batt_psy,
-			POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, &val);
+	if (chip->batt_psy)
+		rc = power_supply_get_property(chip->batt_psy,
+				POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT, &val);
+
 	if (rc < 0) {
 		mmi_err(chip, "Couldn't get batt FCC, rc=%d\n", rc);
 		return rc;
@@ -3712,7 +3745,9 @@ static void mmi_basic_charge_sm(struct smb_mmi_charger *chip,
 				prm->pres_chrg_step = STEP_FULL;
 		}
 	} else if (prm->pres_chrg_step == STEP_FULL) {
-		if (stat->batt_mv < (max_fv_mv - HYST_STEP_MV * 2)) {
+		if (((chip->lotx_enabled) && (stat->batt_soc <= 95))
+				|| (!(chip->lotx_enabled) &&
+				(stat->batt_mv < (max_fv_mv - HYST_STEP_MV * 2)))) {
 			prm->chrg_taper_cnt = 0;
 			prm->pres_chrg_step = STEP_NORM;
 		}
@@ -4314,7 +4349,11 @@ static void mmi_heartbeat_work(struct work_struct *work)
 			chip->factory_kill_armed = true;
 		} else if (chip->factory_kill_armed && !factory_kill_disable) {
 			mmi_warn(chip, "Factory kill power off\n");
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,25)
+			kernel_power_off();
+#else
 			orderly_poweroff(true);
+#endif
 		} else
 			chip->factory_kill_armed = false;
 	}
@@ -4343,7 +4382,6 @@ sch_hb:
 		envp[0] = chrg_rate_string;
 		envp[1] = NULL;
 	}
-
 	if (chip->batt_psy) {
 		smb_mmi_power_supply_changed(chip->batt_psy, envp);
 	} else if (chip->qcom_psy) {
@@ -4503,7 +4541,12 @@ static int batt_get_prop(struct power_supply *psy,
 			val->intval = chip->last_reported_soc;
 		break;
 	case POWER_SUPPLY_PROP_CYCLE_COUNT:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,25)
+		rc = power_supply_get_property(chip->qcom_psy,
+						       psp, val);
+#else
 		val->intval = chip->cycles / 100;
+#endif
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
 		if (chip->max_main_psy && chip->max_flip_psy)
@@ -4544,7 +4587,11 @@ static int batt_get_prop(struct power_supply *psy,
 				}
 			}
 		}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,25)
+		fallthrough;/* Fall through */
+#else
 		/* Fall through */
+#endif
 	default:
 		rc = power_supply_get_property(chip->qcom_psy, psp, val);
 		if (rc < 0) {
@@ -4788,6 +4835,8 @@ static int parse_mmi_dt(struct smb_mmi_charger *chg)
 
 	chg->enable_fcc_large_qg_iterm = of_property_read_bool(node, "mmi,enable-fcc-large-qg-iterm");
 
+	chg->lotx_enabled = of_property_read_bool(node, "mmi,lotx-support");
+
 	return rc;
 }
 
@@ -4895,7 +4944,11 @@ static int parse_mmi_dual_dt(struct smb_mmi_charger *chg)
 
 static int smb_mmi_chg_config_init(struct smb_mmi_charger *chip)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,25)
+	unsigned long subtype = (unsigned long)of_device_get_match_data(chip->dev);
+#else
 	int subtype = (u8)of_device_get_match_data(chip->dev);
+#endif
 
 	switch (subtype) {
 	case PM8150B:
@@ -4914,8 +4967,13 @@ static int smb_mmi_chg_config_init(struct smb_mmi_charger *chip)
 		chip->param = smb5_pmi632_params;
 		break;
 	default:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,25)
+		pr_err("SMBMMI: PMIC subtype %ld not supported\n",
+				subtype);
+#else
 		pr_err("SMBMMI: PMIC subtype %d not supported\n",
 				subtype);
+#endif
 		return -EINVAL;
 	}
 
@@ -4957,9 +5015,100 @@ static ssize_t age_show(struct device *dev,
 }
 static DEVICE_ATTR(age, S_IRUGO, age_show, NULL);
 
+static ssize_t state_of_health_show(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	if (!this_chip) {
+		pr_err("mmi_charger: chip is invalid\n");
+		return -ENODEV;
+	}
+
+	return scnprintf(buf, CHG_SHOW_MAX_SIZE, "%d\n", this_chip->age);
+}
+
+static DEVICE_ATTR(state_of_health, S_IRUGO, state_of_health_show, NULL);
+
+static ssize_t first_usage_date_show(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	if (!this_chip) {
+		pr_err("mmi_charger: chip is invalid\n");
+		return -ENODEV;
+	}
+
+	return scnprintf(buf, CHG_SHOW_MAX_SIZE, "%lu\n", this_chip->first_usage_date);
+}
+
+static ssize_t first_usage_date_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	unsigned long r;
+	unsigned long first_usage_date;
+
+	if (!this_chip) {
+		pr_err("mmi_charger: chip is invalid\n");
+		return -ENODEV;
+	}
+
+	r = kstrtoul(buf, 0, &first_usage_date);
+	if (r) {
+		mmi_err(this_chip, "Invalid first_usage_date value = %lu\n", first_usage_date);
+		return -EINVAL;
+	}
+
+	this_chip->first_usage_date = first_usage_date;
+
+	return r ? r : count;
+}
+
+static DEVICE_ATTR(first_usage_date, 0644, first_usage_date_show, first_usage_date_store);
+
+static ssize_t manufacturing_date_show(struct device *dev,
+			struct device_attribute *attr,
+			char *buf)
+{
+	if (!this_chip) {
+		pr_err("mmi_charger: chip is invalid\n");
+		return -ENODEV;
+	}
+
+	return scnprintf(buf, CHG_SHOW_MAX_SIZE, "%lu\n", this_chip->manufacturing_date);
+}
+
+static ssize_t manufacturing_date_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	unsigned long r;
+	unsigned long manufacturing_date;
+
+	if (!this_chip) {
+		pr_err("mmi_charger: chip is invalid\n");
+		return -ENODEV;
+	}
+
+	r = kstrtoul(buf, 0, &manufacturing_date);
+	if (r) {
+		mmi_err(this_chip, "Invalid manufacturing_date value = %lu\n", manufacturing_date);
+		return -EINVAL;
+	}
+
+	this_chip->manufacturing_date = manufacturing_date;
+
+	return r ? r : count;
+}
+
+static DEVICE_ATTR(manufacturing_date, 0644, manufacturing_date_show, manufacturing_date_store);
+
 static struct attribute * mmi_g[] = {
 	&dev_attr_charge_rate.attr,
 	&dev_attr_age.attr,
+	&dev_attr_state_of_health.attr,
+	&dev_attr_manufacturing_date.attr,
+	&dev_attr_first_usage_date.attr,
 	NULL,
 };
 
@@ -5075,8 +5224,13 @@ static int mmi_smbcharger_iio_read_raw(struct iio_dev *indio_dev,
 	return IIO_VAL_INT;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,25)
+static int mmi_smbcharger_iio_of_xlate(struct iio_dev *indio_dev,
+				const struct fwnode_reference_args *iiospec)
+#else
 static int mmi_smbcharger_iio_of_xlate(struct iio_dev *indio_dev,
 				const struct of_phandle_args *iiospec)
+#endif
 {
 	struct smb_mmi_charger *chip = iio_priv(indio_dev);
 	struct iio_chan_spec *iio_chan = chip->iio_chan;
@@ -5093,7 +5247,11 @@ static int mmi_smbcharger_iio_of_xlate(struct iio_dev *indio_dev,
 static const struct iio_info mmi_smbcharger_iio_info = {
 	.read_raw	= mmi_smbcharger_iio_read_raw,
 	.write_raw	= mmi_smbcharger_iio_write_raw,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,1,25)
+	.fwnode_xlate	= mmi_smbcharger_iio_of_xlate,
+#else
 	.of_xlate	= mmi_smbcharger_iio_of_xlate,
+#endif
 };
 
 static int smb_mmi_init_iio_psy(struct smb_mmi_charger *chip,

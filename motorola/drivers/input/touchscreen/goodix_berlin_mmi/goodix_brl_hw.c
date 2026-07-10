@@ -1037,7 +1037,7 @@ static int brl_esd_check(struct goodix_ts_core *cd)
 #define GOODIX_GESTURE_EVENT		0x20
 #define POINT_TYPE_STYLUS_HOVER		0x01
 #define POINT_TYPE_STYLUS			0x03
-#ifdef CONFIG_MOTO_DDA_PASSIVESTYLUS
+#if defined(CONFIG_MOTO_DDA_PASSIVESTYLUS) || defined(CONFIG_ENABLE_GTP_PALM_CANCEL_BY_ID)
 #define POINT_TYPE_PALM			0x04
 #endif
 #define GOODIX_PALM_FLAG			0x10
@@ -1057,7 +1057,7 @@ static void goodix_parse_finger(struct goodix_touch_data *touch_data,
 			touch_data->touch_num = 0;
 			return;
 		}
-#ifdef CONFIG_MOTO_DDA_PASSIVESTYLUS
+#if defined(CONFIG_MOTO_DDA_PASSIVESTYLUS) || defined(CONFIG_ENABLE_GTP_PALM_CANCEL_BY_ID)
 		if ((coor_data[0] & 0x0F) == POINT_TYPE_PALM)
 			touch_data->coords[id].plam_status = true;
 		else
@@ -1223,6 +1223,11 @@ static int goodix_touch_handler(struct goodix_ts_core *cd,
 #ifdef CONFIG_GTP_FOD
 	ts_debug("touch pre_buf[0]=0x%x", pre_buf[0]);
 	fp_flags = pre_buf[0] & GOODIX_FP_EVENTS;
+
+#ifdef CONFIG_ENABLE_GTP_VIRTUAL_FOD
+	atomic_set(&cd->fp_event, fp_flags);
+#endif
+
 	if(pre_flags != fp_flags) {
 		if(fp_flags)
 			ts_event->gesture_type =  GOODIX_GESTURE_FOD_DOWN;
@@ -1504,6 +1509,7 @@ static int brld_get_framedata(struct goodix_ts_core *cd,
 	int ret;
 	unsigned char val;
 	int retry = 20;
+	struct frame_head *frame_head;
 	unsigned char frame_buf[GOODIX_MAX_FRAMEDATA_LEN];
 	unsigned char *cur_ptr;
 	unsigned int flag_addr = cd->ic_info.misc.frame_data_addr;
@@ -1538,6 +1544,11 @@ static int brld_get_framedata(struct goodix_ts_core *cd,
 		return -EINVAL;
 	}
 
+	frame_head = (struct frame_head *)frame_buf;
+	if (checksum_cmp(frame_buf, frame_head->cur_frame_len, CHECKSUM_MODE_U16_LE)) {
+		ts_err("frame body checksum error");
+		//return -EINVAL;
+	}
 	cur_ptr = frame_buf;
 	cur_ptr += cd->ic_info.misc.frame_data_head_len;
 	cur_ptr += cd->ic_info.misc.fw_attr_len;
